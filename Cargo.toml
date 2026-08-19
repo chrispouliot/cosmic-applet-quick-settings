@@ -10,9 +10,24 @@ repository = "https://github.com/chrispouliot/cosmic-applet-quick-settings"
 xdgen = "0.1"
 
 [dependencies]
+bluer = { version = "0.17", features = ["bluetoothd", "id"] }
+futures = "0.3"
 i18n-embed-fl = "0.10"
 rust-embed = "8.11"
+logind-zbus = "5.3"
+nmrs = "3.4"
 tokio = { version = "1.52.0", features = ["full"] }
+zbus = { version = "5.14", default-features = false, features = ["tokio"] }
+
+[dependencies.cosmic-settings-audio-client]
+git = "https://github.com/pop-os/cosmic-settings-daemon"
+features = ["codec"]
+
+[dependencies.cosmic-settings-daemon-subscription]
+git = "https://github.com/pop-os/cosmic-settings"
+
+[dependencies.cosmic-settings-upower-subscription]
+git = "https://github.com/pop-os/cosmic-settings"
 
 [dependencies.i18n-embed]
 version = "0.16"
@@ -25,6 +40,7 @@ features = [
     # Applet support
     "applet",
     "applet-token",
+    "process",
     # Uses cosmic-settings-daemon to watch for config file changes
     "dbus-config",
     # Support creating additional application windows.

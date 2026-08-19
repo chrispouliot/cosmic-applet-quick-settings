@@ -30,6 +30,38 @@ just rootdir=debian/cosmic-applet-quick-settings prefix=/usr install
 
 It is recommended to build a source tarball with the vendored dependencies, which can typically be done by running `just vendor` on the host system before it enters the build environment.
 
+### NixOS
+
+This repository exposes a package for both supported Linux systems. Add it to a
+local NixOS flake using an absolute `path:` input:
+
+```nix
+{
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    quick-settings.url = "path:/absolute/path/to/cosmic-applet-quick-settings";
+    quick-settings.inputs.nixpkgs.follows = "nixpkgs";
+  };
+
+  outputs = { self, nixpkgs, quick-settings, ... }:
+    {
+      nixosConfigurations.my-host = nixpkgs.lib.nixosSystem {
+        system = "x86_64-linux";
+        modules = [
+          ({ pkgs, ... }: {
+            environment.systemPackages = [
+              quick-settings.packages.${pkgs.system}.default
+            ];
+          })
+        ];
+      };
+    };
+}
+```
+
+Rebuild NixOS with `sudo nixos-rebuild switch --flake .#my-host`, then add the
+applet from the COSMIC panel settings.
+
 ## Developers
 
 Developers should install [rustup][rustup] and configure their editor to use [rust-analyzer][rust-analyzer].
