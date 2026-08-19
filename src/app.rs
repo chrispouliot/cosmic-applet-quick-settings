@@ -19,7 +19,7 @@ use cosmic::{
     cctk::sctk::reexports::calloop,
     cosmic_theme::Spacing,
     iced::{Alignment, Length, Limits, Subscription, futures::StreamExt, window::Id},
-    widget::{button, column, divider, icon, row, slider, text},
+    widget::{button, column, container, divider, icon, row, slider, text},
 };
 use cosmic_settings_audio_client::{self as audio_client, CosmicAudioProxy};
 use cosmic_settings_daemon_subscription as settings_daemon;
@@ -217,7 +217,7 @@ impl cosmic::Application for AppModel {
 
     #[allow(clippy::too_many_lines)]
     fn view_window(&self, _id: Id) -> Element<'_, Message> {
-        let mut content = column![self.header()];
+        let mut content = column![];
 
         let network_description = self
             .network
@@ -257,12 +257,9 @@ impl cosmic::Application for AppModel {
                 .map(|enabled| Message::ToggleBluetooth(!enabled)),
         );
         content = content.push(
-            cosmic::widget::grid::<Message>()
-                .push(network_tile)
-                .push(bluetooth_tile)
+            row![network_tile, bluetooth_tile]
                 .width(Length::Fill)
-                .column_spacing(8)
-                .row_spacing(8),
+                .spacing(8),
         );
 
         content = content.push(padded_divider());
@@ -271,9 +268,12 @@ impl cosmic::Application for AppModel {
         if let Some(brightness) = self.brightness {
             content = content.push(
                 row![
-                    icon::from_name("display-brightness-symbolic")
-                        .size(22)
-                        .symbolic(true),
+                    container(
+                        icon::from_name("display-brightness-symbolic")
+                            .size(22)
+                            .symbolic(true),
+                    )
+                    .width(Length::Fixed(42.0)),
                     slider(0..=brightness.max, brightness.value, Message::SetBrightness),
                     text(format!("{}%", brightness_percent(brightness))).width(Length::Fixed(42.0)),
                 ]
@@ -329,34 +329,33 @@ impl cosmic::Application for AppModel {
             );
         }
 
-        content = content
-            .push(padded_divider())
-            .push(button::standard(fl!("settings")).on_press(Message::OpenSettings))
-            .push(
-                row![
-                    action_button(
-                        "system-suspend-symbolic",
-                        fl!("suspend"),
-                        PowerAction::Suspend
-                    ),
-                    action_button(
-                        "system-log-out-symbolic",
-                        fl!("logout"),
-                        PowerAction::Logout
-                    ),
-                    action_button(
-                        "system-reboot-symbolic",
-                        fl!("restart"),
-                        PowerAction::Restart
-                    ),
-                    action_button(
-                        "system-shutdown-symbolic",
-                        fl!("shutdown"),
-                        PowerAction::Shutdown
-                    ),
-                ]
-                .spacing(4),
-            );
+        content = content.push(padded_divider()).push(
+            row![
+                settings_button(fl!("settings")),
+                action_button(
+                    "system-suspend-symbolic",
+                    fl!("suspend"),
+                    PowerAction::Suspend
+                ),
+                action_button(
+                    "system-log-out-symbolic",
+                    fl!("logout"),
+                    PowerAction::Logout
+                ),
+                action_button(
+                    "system-reboot-symbolic",
+                    fl!("restart"),
+                    PowerAction::Restart
+                ),
+                action_button(
+                    "system-shutdown-symbolic",
+                    fl!("shutdown"),
+                    PowerAction::Shutdown
+                ),
+            ]
+            .spacing(2)
+            .width(Length::Fill),
+        );
 
         self.core
             .applet
@@ -623,24 +622,6 @@ impl AppModel {
             });
     }
 
-    fn header(&self) -> Element<'_, Message> {
-        let connectivity = self
-            .network
-            .connectivity
-            .clone()
-            .unwrap_or_else(|| fl!("starting"));
-        row![
-            column![
-                text::title3(fl!("quick-settings")),
-                text::caption(connectivity)
-            ]
-            .width(Length::Fill),
-            icon::from_name("display-symbolic").size(28).symbolic(true),
-        ]
-        .align_y(Alignment::Center)
-        .into()
-    }
-
     fn audio_row(&self) -> Element<'_, Message> {
         let icon_name = if self.audio.mute || self.audio.volume == 0 {
             "audio-volume-muted-symbolic"
@@ -661,7 +642,7 @@ impl AppModel {
             text(fl!("unavailable")).into()
         };
         row![
-            mute,
+            container(mute).width(Length::Fixed(42.0)),
             slider,
             text(format!("{}%", self.audio.volume)).width(Length::Fixed(42.0))
         ]
@@ -689,6 +670,21 @@ fn action_button(icon_name: &str, label: String, action: PowerAction) -> Element
         .align_x(Alignment::Center),
     )
     .on_press(Message::Power(action))
+    .padding([5, 0])
+    .width(Length::Fill)
+    .into()
+}
+
+fn settings_button(label: String) -> Element<'static, Message> {
+    button::custom(
+        column![
+            icon::from_name("settings-symbolic").size(24).symbolic(true),
+            text::caption(label)
+        ]
+        .align_x(Alignment::Center),
+    )
+    .on_press(Message::OpenSettings)
+    .padding([5, 0])
     .width(Length::Fill)
     .into()
 }
