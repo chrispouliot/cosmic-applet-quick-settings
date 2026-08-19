@@ -19,7 +19,7 @@ use cosmic::{
     cctk::sctk::reexports::calloop,
     cosmic_theme::Spacing,
     iced::{Alignment, Length, Limits, Subscription, futures::StreamExt, window::Id},
-    widget::{button, column, divider, icon, row, slider, text, toggler},
+    widget::{button, column, divider, icon, row, slider, text},
 };
 use cosmic_settings_audio_client::{self as audio_client, CosmicAudioProxy};
 use cosmic_settings_daemon_subscription as settings_daemon;
@@ -112,6 +112,7 @@ struct BrightnessState {
 struct BatteryState {
     percent: f64,
     on_battery: bool,
+    time_to_empty: i64,
 }
 
 #[derive(Clone, Debug)]
@@ -145,6 +146,8 @@ pub enum Message {
     Battery(DeviceDbusEvent),
     Profile(Result<PowerProfile, String>),
     SetProfile(String),
+    SetProfileIndex(usize),
+    Surface(cosmic::surface::Action),
     SettingsConnection(Result<Connection, zbus::Error>),
     OpenSettings,
     Token(TokenUpdate),
@@ -216,31 +219,51 @@ impl cosmic::Application for AppModel {
     fn view_window(&self, _id: Id) -> Element<'_, Message> {
         let mut content = column![self.header()];
 
-        let network_toggle = match self.network.wifi_enabled {
-            Some(enabled) => toggler(enabled).on_toggle(Message::ToggleWifi),
-            None => toggler(false),
-        };
         let network_description = self
             .network
             .connection_name
             .clone()
             .or_else(|| self.network.connectivity.clone())
             .unwrap_or_else(|| fl!("unavailable"));
-        content = content.push(item(fl!("network"), network_description, network_toggle));
-
-        let bluetooth_toggle = match self.bluetooth {
-            Some(enabled) => toggler(enabled).on_toggle(Message::ToggleBluetooth),
-            None => toggler(false),
+        let network_caption = if self.network.wifi_enabled == Some(false) {
+            format!("{network_description} · {}", fl!("disabled"))
+        } else {
+            network_description
         };
-        content = content.push(item(
+        let network_tile = quick_control(
+            "network-wireless-symbolic",
+            fl!("network"),
+            network_caption,
+            self.network.wifi_enabled == Some(true),
+            self.network
+                .wifi_enabled
+                .map(|enabled| Message::ToggleWifi(!enabled)),
+        );
+        let bluetooth_tile = quick_control(
+            "bluetooth-symbolic",
             fl!("bluetooth"),
-            if self.bluetooth.is_some() {
-                fl!("available")
-            } else {
-                fl!("unavailable")
-            },
-            bluetooth_toggle,
-        ));
+            self.bluetooth.map_or_else(
+                || fl!("unavailable"),
+                |enabled| {
+                    if enabled {
+                        fl!("enabled")
+                    } else {
+                        fl!("disabled")
+                    }
+                },
+            ),
+            self.bluetooth == Some(true),
+            self.bluetooth
+                .map(|enabled| Message::ToggleBluetooth(!enabled)),
+        );
+        content = content.push(
+            cosmic::widget::grid::<Message>()
+                .push(network_tile)
+                .push(bluetooth_tile)
+                .width(Length::Fill)
+                .column_spacing(8)
+                .row_spacing(8),
+        );
 
         content = content.push(padded_divider());
         content = content.push(self.audio_row());
@@ -260,42 +283,50 @@ impl cosmic::Application for AppModel {
         }
 
         if let Some(battery) = self.battery {
-            let status = if battery.on_battery {
-                fl!("on-battery")
-            } else {
-                fl!("charging")
-            };
+            let caption = battery_caption(battery);
             content = content.push(
                 row![
-                    icon::from_name("battery-symbolic").size(22).symbolic(true),
-                    text(fl!("battery")).width(Length::Fill),
-                    text(format!("{:.0}% · {status}", battery.percent)),
+                    icon::from_name(battery_icon_name(battery))
+                        .size(24)
+                        .symbolic(true),
+                    column![text(fl!("battery")), text::caption(caption)].width(Length::Fill),
                 ]
+                .spacing(10)
                 .align_y(Alignment::Center),
             );
         }
 
         if let Some(profile) = self.profile.as_ref() {
             content = content.push(padded_divider());
-            content = content.push(text(fl!("power-profile")));
-            for name in &profile.choices {
-                let selected = profile.active == *name;
-                let indicator: Element<'_, Message> = if selected {
-                    icon::from_name("emblem-ok-symbolic")
-                        .size(16)
-                        .symbolic(true)
-                        .into()
-                } else {
-                    text(" ").width(Length::Fixed(16.0)).into()
-                };
-                let button = button::custom(
-                    row![text(profile_label(name)).width(Length::Fill), indicator,]
-                        .align_y(Alignment::Center),
-                )
-                .on_press(Message::SetProfile(name.clone()))
-                .width(Length::Fill);
-                content = content.push(button);
-            }
+            let selected = profile
+                .choices
+                .iter()
+                .position(|choice| choice == &profile.active);
+            let labels = profile
+                .choices
+                .iter()
+                .map(|choice| profile_label(choice))
+                .collect::<Vec<_>>();
+            let dropdown = cosmic::widget::dropdown::popup_dropdown(
+                labels,
+                selected,
+                Message::SetProfileIndex,
+                self.popup.unwrap_or(Id::NONE),
+                Message::Surface,
+                |message| message,
+            )
+            .width(Length::Fixed(150.0));
+            content = content.push(
+                row![
+                    icon::from_name("preferences-system-symbolic")
+                        .size(22)
+                        .symbolic(true),
+                    text(fl!("power-profile")).width(Length::Fill),
+                    dropdown,
+                ]
+                .spacing(10)
+                .align_y(Alignment::Center),
+            );
         }
 
         content = content
@@ -473,15 +504,23 @@ impl cosmic::Application for AppModel {
                 DeviceDbusEvent::Update {
                     on_battery,
                     percent,
-                    ..
+                    time_to_empty,
                 } => {
                     self.battery = Some(BatteryState {
                         percent,
                         on_battery,
+                        time_to_empty,
                     });
                 }
             },
             Message::Profile(result) => self.profile = result.ok(),
+            Message::SetProfileIndex(index) => {
+                if let Some(profile) = self.profile.as_ref()
+                    && let Some(name) = profile.choices.get(index).cloned()
+                {
+                    return self.update(Message::SetProfile(name));
+                }
+            }
             Message::SetProfile(profile) => {
                 if let Some(current) = self.profile.as_mut()
                     && current.choices.iter().any(|choice| choice == &profile)
@@ -492,6 +531,11 @@ impl cosmic::Application for AppModel {
                         cosmic::Action::App(Message::Profile(result))
                     });
                 }
+            }
+            Message::Surface(action) => {
+                return cosmic::task::message(cosmic::Action::Cosmic(
+                    cosmic::app::Action::Surface(action),
+                ));
             }
             Message::SettingsConnection(result) => {
                 if let Ok(connection) = result {
@@ -539,13 +583,32 @@ fn privileged_wayland_socket_available() -> bool {
     std::env::var_os("X_PRIVILEGED_WAYLAND_SOCKET").is_some()
 }
 
-#[allow(clippy::elidable_lifetime_names, clippy::needless_pass_by_value)]
-fn item<'a>(
+fn quick_control(
+    icon_name: &'static str,
     title: String,
-    description: String,
-    control: cosmic::widget::Toggler<'a, Message>,
-) -> Element<'a, Message> {
-    cosmic::widget::settings::item(format!("{title} · {description}"), control).into()
+    caption: String,
+    selected: bool,
+    on_press: Option<Message>,
+) -> Element<'static, Message> {
+    let mut control = button::custom(
+        column![
+            icon::from_name(icon_name).size(24).symbolic(true),
+            text(title).width(Length::Fill),
+            text::caption(caption).width(Length::Fill),
+        ]
+        .spacing(2)
+        .align_x(Alignment::Center),
+    )
+    .selected(selected)
+    .class(cosmic::theme::Button::ListItem(
+        cosmic::theme::active().cosmic().corner_radii.radius_s,
+    ))
+    .padding([10, 8])
+    .width(Length::Fill);
+    if let Some(message) = on_press {
+        control = control.on_press(message);
+    }
+    control.into()
 }
 
 impl AppModel {
@@ -632,6 +695,72 @@ fn action_button(icon_name: &str, label: String, action: PowerAction) -> Element
 
 fn brightness_percent(state: BrightnessState) -> i32 {
     (state.value.max(0) * 100 / state.max.max(1)).clamp(0, 100)
+}
+
+fn battery_icon_name(state: BatteryState) -> String {
+    let percent = state.percent.clamp(0.0, 100.0);
+    let level = if percent > 95.0 {
+        100
+    } else if percent > 80.0 {
+        90
+    } else if percent > 65.0 {
+        80
+    } else if percent > 35.0 {
+        50
+    } else if percent > 20.0 {
+        35
+    } else if percent > 14.0 {
+        20
+    } else if percent > 9.0 {
+        10
+    } else if percent > 5.0 {
+        5
+    } else {
+        0
+    };
+    let charging = if state.on_battery { "" } else { "charging-" };
+    format!("cosmic-applet-battery-level-{level}-{charging}symbolic")
+}
+
+fn battery_caption(state: BatteryState) -> String {
+    let status = if state.on_battery {
+        fl!("on-battery")
+    } else {
+        fl!("charging")
+    };
+    let percentage = format!("{:.0}%", state.percent.clamp(0.0, 100.0));
+    if state.time_to_empty > 0 {
+        format!(
+            "{percentage} · {status} · {}",
+            fl!(
+                "battery-time-remaining",
+                time = battery_time(state.time_to_empty)
+            )
+        )
+    } else {
+        format!("{percentage} · {status}")
+    }
+}
+
+fn battery_time(seconds: i64) -> String {
+    if seconds < 60 {
+        return fl!("less-than-minute");
+    }
+    let minutes = seconds / 60;
+    let days = minutes / (24 * 60);
+    let hours = (minutes % (24 * 60)) / 60;
+    let minutes = minutes % 60;
+    let mut parts = Vec::with_capacity(3);
+    if days > 0 {
+        parts.push(format!("{days}d"));
+    }
+    if hours > 0 {
+        parts.push(format!("{hours}h"));
+    }
+    if minutes > 0 {
+        parts.push(format!("{minutes}m"));
+    }
+    parts.join(" ")
 }
 
 fn profile_label(profile: &str) -> String {
